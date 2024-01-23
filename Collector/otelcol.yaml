@@ -1,0 +1,71 @@
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: dynatrace-secrets
+  namespace: otel-backend
+type: Opaque
+stringData:
+  # replace the "<tenant id>" and "<API Token>" with the right values
+  environment-id: "<tenant id>"
+  api-token: "<API Token>"
+---
+apiVersion: opentelemetry.io/v1alpha1
+kind: OpenTelemetryCollector
+metadata:
+  name: otel-collector
+  namespace: otel-backend
+spec:
+  image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:latest
+  mode: deployment # statefulset, daemonset, sidecar
+  env:
+    - name: environment-id
+      valueFrom:
+        secretKeyRef:
+          name: dynatrace-secrets
+          key: environment-id
+    - name: API-TOKEN
+      valueFrom:
+        secretKeyRef:
+           name: dynatrace-secrets
+           key: api-token
+  autoscaler:
+    targetCPUUtilization: 90
+    minReplicas: 1
+    maxReplicas: 5
+  config: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+          http:
+    processors:
+      cumulativetodelta:
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 75
+        spike_limit_percentage: 25
+      batch:
+        send_batch_size: 10000
+        timeout: 10s
+    exporters:
+      otlphttp:
+         endpoint: "https://${environment-id}.sprint.dynatracelabs.com/api/v2/otlp"
+         headers:
+           Authorization: "Api-Token ${API-TOKEN}"
+      logging:
+         verbosity: detailed
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [otlphttp]
+        metrics:
+          receivers: [otlp]
+          processors: [cumulativetodelta, memory_limiter, batch]
+          exporters: [otlphttp]
+        logs:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [otlphttp]
